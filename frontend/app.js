@@ -1,5 +1,5 @@
 // REEMPLAZAR ESTA URL CON LA DE TU BACKEND DEPLOYADO
-const BACKEND_URL = 'http://localhost:3000'; 
+const BACKEND_URL = 'branches-chat-production.up.railway.app:8080'; 
 const socket = io(BACKEND_URL);
 
 let currentThreadId = null;
