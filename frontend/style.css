@@ -1,0 +1,87 @@
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    height: 100vh;
+    margin: 0;
+    background-color: #f0f2f5;
+}
+.panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+}
+#main-chat {
+    border-right: 1px solid #ccc;
+    background-color: white;
+}
+#thread-view {
+    background-color: #fafafa;
+    display: none;
+}
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+}
+.message-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+.message {
+    padding: 12px;
+    background-color: #e3f2fd;
+    border-radius: 8px;
+    align-self: flex-start;
+    max-width: 80%;
+}
+.thread-message {
+    background-color: #fff3e0;
+}
+.reply-btn {
+    margin-top: 8px;
+    background: none;
+    border: none;
+    color: #0056b3;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 0;
+    font-weight: bold;
+}
+.close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.2em;
+}
+.thread-parent {
+    margin-bottom: 15px;
+    padding: 10px;
+    background: #e0e0e0;
+    border-radius: 5px;
+}
+.input-area {
+    display: flex;
+    gap: 10px;
+}
+.input-area input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+.input-area button {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}

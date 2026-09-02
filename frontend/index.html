@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat con Hilos</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="main-chat" class="panel">
+        <div class="header">
+            <h2>Chat Principal</h2>
+        </div>
+        <div id="main-messages" class="message-list"></div>
+        <div class="input-area">
+            <input type="text" id="main-input" placeholder="Escribí un mensaje..." onkeypress="if(event.key==='Enter') sendMainMessage()">
+            <button onclick="sendMainMessage()">Enviar</button>
+        </div>
+    </div>
+    <div id="thread-view" class="panel">
+        <div class="header">
+            <h2>Hilo de Conversación</h2>
+            <button onclick="closeThread()" class="close-btn">✖</button>
+        </div>
+        <div class="thread-parent">
+            <strong>Tema:</strong> <span id="thread-parent-text"></span>
+        </div>
+        <div id="thread-messages" class="message-list"></div>
+        <div class="input-area">
+            <input type="text" id="thread-input" placeholder="Responder..." onkeypress="if(event.key==='Enter') sendThreadMessage()">
+            <button onclick="sendThreadMessage()">Responder</button>
+        </div>
+    </div>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
