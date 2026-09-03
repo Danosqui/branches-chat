@@ -1,5 +1,5 @@
 // REEMPLAZAR ESTA URL CON LA DE TU BACKEND DEPLOYADO
-const BACKEND_URL = 'https://branches-chat-production.up.railway.app:8080'; 
+const BACKEND_URL = 'https://branches-chat-production.up.railway.app'; 
 const socket = io(BACKEND_URL);
 
 socket.on('connect', () => {
