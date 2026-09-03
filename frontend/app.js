@@ -1,6 +1,10 @@
 // REEMPLAZAR ESTA URL CON LA DE TU BACKEND DEPLOYADO
-const BACKEND_URL = 'branches-chat-production.up.railway.app:8080'; 
+const BACKEND_URL = 'https://branches-chat-production.up.railway.app:8080'; 
 const socket = io(BACKEND_URL);
+
+socket.on('connect', () => {
+    console.log('Conexión establecida con el servidor. ID:', socket.id);
+});
 
 let currentThreadId = null;
 const messagesData = {};
@@ -28,6 +32,7 @@ socket.on('receive_thread_message', (reply) => {
 });
 
 function renderMainChat() {
+    console.log("rendermainchat funca?")
     const container = document.getElementById('main-messages');
     container.innerHTML = '';
     
@@ -52,11 +57,13 @@ function renderMainChat() {
 }
 
 function sendMainMessage() {
+    console.log("intento mandar un main mes")
     const input = document.getElementById('main-input');
     const text = input.value.trim();
     if (!text) return;
-    
-    socket.emit('new_main_message', { text });
+    console.log("continue" + input.value.trim())
+    socket.emit('new_main_message',text);
+    console.log("dgdagdagda", text)
     input.value = '';
 }
 
@@ -97,4 +104,5 @@ function sendThreadMessage() {
 
     socket.emit('new_thread_message', { message_id: currentThreadId, text });
     input.value = '';
+
 }

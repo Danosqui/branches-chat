@@ -1,3 +1,4 @@
+require("dotenv").config()
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -14,7 +15,9 @@ const io = new Server(server, {
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    ssl: { rejectUnauthorized: false },
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000
 });
 
 io.on('connection', async (socket) => {
@@ -23,7 +26,6 @@ io.on('connection', async (socket) => {
     try {
         const msgsRes = await pool.query('SELECT * FROM messages ORDER BY id ASC');
         const repliesRes = await pool.query('SELECT * FROM replies ORDER BY id ASC');
-        
         const data = msgsRes.rows.map(msg => {
             return {
                 id: msg.id,
@@ -36,9 +38,15 @@ io.on('connection', async (socket) => {
         console.error('Error al cargar datos', err);
     }
 
+    socket.onAny((eventName, ...args) => {
+        console.log(` gugugaga [Socket ${socket.id}] Evento recibido: "${eventName}"`, args);
+    });
+
     socket.on('new_main_message', async (msgData) => {
+        console.log(msgData)
+        console.log("wacho")
         try {
-            const res = await pool.query('INSERT INTO messages (text) VALUES ($1) RETURNING *', [msgData.text]);
+            const res = await pool.query('INSERT INTO messages (text) VALUES ($1) RETURNING *', [msgData]);
             const newMsg = { id: res.rows[0].id, text: res.rows[0].text, replies: [] };
             io.emit('receive_main_message', newMsg);
         } catch (err) {
