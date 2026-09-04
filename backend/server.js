@@ -6,8 +6,16 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const webpush = require('web-push');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'branches_chat_super_secret_key_2026';
+
+// Configuración de Web Push (VAPID)
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || 'BIbCEyJdGemEA3lFGL084SJNG_rRKojC1PBuFlD2ML_DoXt1cNkV9dUq1jvNYuVBwneKEYfVxuew5xS9eRFYWiU';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'Ws--J3j0t4Mm8vw-lOYhGG3ZU6hGE5mWBLbI0RIG7aQ';
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@branches-chat.com';
+
+webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 const app = express();
 app.use(cors());
@@ -25,7 +33,7 @@ const pool = new Pool({
     connectionTimeoutMillis: 10000
 });
 
-// Inicialización de tablas en la base de datos
+// Inicialización segura de tablas en la base de datos
 async function initDb() {
     if (!process.env.DATABASE_URL) {
         console.warn('ADVERTENCIA: DATABASE_URL no está definida. Configura la base de datos en el archivo .env.');
@@ -63,12 +71,35 @@ async function initDb() {
             );
         `);
 
-        // Asegurar que la columna sender_id exista en replies (si la tabla fue creada previamente sin ella)
+        // Asegurar que la columna sender_id exista en replies
         await pool.query(`
             ALTER TABLE replies ADD COLUMN IF NOT EXISTS sender_id INTEGER REFERENCES users(id);
         `);
 
-        console.log('Base de datos inicializada correctamente (tablas users, messages y replies listas).');
+        // Tabla de punteros de lectura de mensajes (sincronización multidispositivo)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_reads (
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                thread_id INTEGER DEFAULT 0,
+                last_read_id INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, thread_id)
+            );
+        `);
+
+        // Tabla de suscripciones a notificaciones Web Push (notificaciones con app cerrada)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                endpoint TEXT UNIQUE NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        console.log('Base de datos inicializada correctamente (tablas users, messages, replies, user_reads y push_subscriptions listas).');
     } catch (err) {
         console.error('Error al inicializar las tablas de la base de datos:', err);
     }
@@ -133,7 +164,7 @@ app.post('/api/register', async (req, res) => {
         );
         const newUser = insertRes.rows[0];
 
-        // Crear token de sesión (por defecto 7 días para registro)
+        // Crear token de sesión (7 días para registro)
         const token = jwt.sign(
             { id: newUser.id, username: newUser.username },
             JWT_SECRET,
@@ -203,6 +234,86 @@ app.get('/api/verify', authenticateToken, (req, res) => {
     res.json({ valid: true, user: req.user });
 });
 
+// ================= RUTAS DE WEB PUSH =================
+
+// Obtener clave pública VAPID para suscripción en el navegador
+app.get('/api/push/vapid-public-key', (req, res) => {
+    res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Guardar suscripción Push
+app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
+    try {
+        const { subscription } = req.body;
+        if (!subscription || !subscription.endpoint || !subscription.keys) {
+            return res.status(400).json({ error: 'Suscripción inválida' });
+        }
+        await pool.query(`
+            INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (endpoint) 
+            DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth
+        `, [req.user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]);
+
+        res.status(201).json({ success: true, message: 'Suscripción push guardada.' });
+    } catch (err) {
+        console.error('Error al guardar suscripción push:', err);
+        res.status(500).json({ error: 'Error al registrar suscripción push.' });
+    }
+});
+
+// Eliminar suscripción Push (cuando el usuario silencia)
+app.post('/api/push/unsubscribe', authenticateToken, async (req, res) => {
+    try {
+        const { endpoint } = req.body;
+        if (endpoint) {
+            await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+        }
+        res.json({ success: true, message: 'Suscripción push eliminada.' });
+    } catch (err) {
+        console.error('Error al desuscribir push:', err);
+        res.status(500).json({ error: 'Error al desuscribir push.' });
+    }
+});
+
+// Función para enviar notificaciones Push a los demás usuarios
+async function sendPushNotificationToOthers(senderUserId, title, body, extraData = {}) {
+    try {
+        const subsRes = await pool.query(
+            'SELECT * FROM push_subscriptions WHERE user_id IS NULL OR user_id != $1',
+            [senderUserId || 0]
+        );
+
+        if (subsRes.rows.length === 0) return;
+
+        const payload = JSON.stringify({
+            title,
+            body,
+            url: '/',
+            ...extraData
+        });
+
+        const promises = subsRes.rows.map(sub => {
+            const pushConfig = {
+                endpoint: sub.endpoint,
+                keys: {
+                    p256dh: sub.p256dh,
+                    auth: sub.auth
+                }
+            };
+            return webpush.sendNotification(pushConfig, payload).catch(async (err) => {
+                if (err.statusCode === 410 || err.statusCode === 404) {
+                    await pool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+                }
+            });
+        });
+
+        await Promise.allSettled(promises);
+    } catch (err) {
+        console.error('Error enviando push notifications:', err);
+    }
+}
+
 // ================= SOCKET.IO =================
 
 // Middleware de autenticación opcional por socket
@@ -223,6 +334,11 @@ io.on('connection', async (socket) => {
     const currentUsername = socket.user ? socket.user.username : 'Anónimo';
     console.log(`Usuario conectado: ${socket.id} (${currentUsername})`);
 
+    // Unir el socket a una sala privada del usuario para sincronización multidispositivo
+    if (socket.user && socket.user.id) {
+        socket.join(`user_${socket.user.id}`);
+    }
+
     try {
         // Cargar mensajes con JOIN a users para obtener el nombre de usuario
         const msgsRes = await pool.query(`
@@ -238,7 +354,7 @@ io.on('connection', async (socket) => {
             ORDER BY r.id ASC
         `);
 
-        const data = msgsRes.rows.map(msg => {
+        const messagesList = msgsRes.rows.map(msg => {
             return {
                 id: msg.id,
                 sender_id: msg.sender_id,
@@ -254,10 +370,61 @@ io.on('connection', async (socket) => {
                     }))
             };
         });
-        socket.emit('initial_data', data);
+
+        // Obtener estado de lectura del usuario para sincronización multidispositivo
+        const userReads = { main: 0, threads: {} };
+        if (socket.user && socket.user.id) {
+            try {
+                const readsRes = await pool.query(
+                    'SELECT thread_id, last_read_id FROM user_reads WHERE user_id = $1',
+                    [socket.user.id]
+                );
+                readsRes.rows.forEach(r => {
+                    if (r.thread_id === 0) {
+                        userReads.main = r.last_read_id;
+                    } else {
+                        userReads.threads[r.thread_id] = r.last_read_id;
+                    }
+                });
+            } catch (err) {
+                console.error('Error al cargar user_reads:', err);
+            }
+        }
+
+        socket.emit('initial_data', {
+            messages: messagesList,
+            userReads
+        });
     } catch (err) {
         console.error('Error al cargar datos de chat:', err);
     }
+
+    // Registrar lectura de mensajes (chat principal o hilos)
+    socket.on('mark_read', async (readData) => {
+        if (!socket.user || !socket.user.id || !readData || readData.last_read_id === undefined) return;
+        const threadId = readData.thread_id || 0;
+        const lastReadId = parseInt(readData.last_read_id, 10);
+        if (isNaN(lastReadId)) return;
+
+        try {
+            await pool.query(`
+                INSERT INTO user_reads (user_id, thread_id, last_read_id, updated_at)
+                VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, thread_id)
+                DO UPDATE SET 
+                    last_read_id = GREATEST(user_reads.last_read_id, EXCLUDED.last_read_id),
+                    updated_at = CURRENT_TIMESTAMP
+            `, [socket.user.id, threadId, lastReadId]);
+
+            // Sincronizar en tiempo real con las otras pestañas o dispositivos del mismo usuario
+            socket.to(`user_${socket.user.id}`).emit('sync_read', {
+                thread_id: threadId,
+                last_read_id: lastReadId
+            });
+        } catch (err) {
+            console.error('Error al guardar mark_read:', err);
+        }
+    });
 
     socket.on('new_main_message', async (msgData) => {
         try {
@@ -298,6 +465,14 @@ io.on('connection', async (socket) => {
                 replies: []
             };
             io.emit('receive_main_message', newMsg);
+
+            // Enviar notificación Push en segundo plano a los demás usuarios
+            sendPushNotificationToOthers(
+                sender_id,
+                `Mensaje de ${senderUsername || 'Alguien'}`,
+                text,
+                { type: 'main_message', messageId: res.rows[0].id }
+            );
         } catch (err) {
             console.error('Error al guardar mensaje principal:', err);
         }
@@ -339,6 +514,14 @@ io.on('connection', async (socket) => {
                 sender: senderUsername || 'Anónimo',
                 text: res.rows[0].text
             });
+
+            // Enviar notificación Push en segundo plano
+            sendPushNotificationToOthers(
+                sender_id,
+                `Respuesta de ${senderUsername || 'Alguien'} en un hilo`,
+                text,
+                { type: 'thread_message', messageId }
+            );
         } catch (err) {
             console.error('Error al guardar respuesta de hilo:', err);
         }
