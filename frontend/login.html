@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat - Iniciar Sesión / Registro</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="login-wrapper">
+        <div class="login-card">
+            <h2 id="form-title">Iniciar Sesión</h2>
+            
+            <div id="alert-msg" class="alert-box" style="display: none;"></div>
+
+            <form id="auth-form">
+                <div class="form-group">
+                    <label for="usuario">Usuario</label>
+                    <input type="text" id="usuario" name="usuario" placeholder="Ingresá tu usuario" required autocomplete="username">
+                </div>
+
+                <div class="form-group">
+                    <label for="contraseña">Contraseña</label>
+                    <input type="password" id="contraseña" name="contraseña" placeholder="Ingresá tu contraseña" required autocomplete="current-password">
+                </div>
+
+                <div class="form-group-checkbox" id="remember-me-group">
+                    <label for="remember-me">
+                        <input type="checkbox" id="remember-me" name="remember-me" checked>
+                        <span>Recordarme</span>
+                    </label>
+                </div>
+
+                <button type="submit" id="submit-btn">Ingresar</button>
+            </form>
+
+            <div class="toggle-auth">
+                <p><span id="toggle-desc">¿No tenés cuenta?</span> <a href="#" id="toggle-link">Registrate acá</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuración de la URL del Backend independiente (Railway en producción, localhost:3000 en desarrollo)
+        const BACKEND_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+            ? 'http://localhost:3000'
+            : 'https://branches-chat-production.up.railway.app';
+
+        // Si ya hay una sesión activa, redirigir directo al chat
+        const storedToken = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        if (storedToken) {
+            window.location.href = 'index.html';
+        }
+
+        let isLoginMode = true;
+
+        const formTitle = document.getElementById('form-title');
+        const authForm = document.getElementById('auth-form');
+        const submitBtn = document.getElementById('submit-btn');
+        const toggleLink = document.getElementById('toggle-link');
+        const toggleDesc = document.getElementById('toggle-desc');
+        const rememberMeGroup = document.getElementById('remember-me-group');
+        const alertMsg = document.getElementById('alert-msg');
+        const usuarioInput = document.getElementById('usuario');
+        const contraseñaInput = document.getElementById('contraseña');
+        const rememberMeCheckbox = document.getElementById('remember-me');
+
+        function showAlert(msg, isSuccess = false) {
+            alertMsg.textContent = msg;
+            alertMsg.className = 'alert-box ' + (isSuccess ? 'alert-success' : 'alert-error');
+            alertMsg.style.display = 'block';
+        }
+
+        function clearAlert() {
+            alertMsg.style.display = 'none';
+            alertMsg.textContent = '';
+        }
+
+        toggleLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            clearAlert();
+            isLoginMode = !isLoginMode;
+
+            if (isLoginMode) {
+                formTitle.textContent = 'Iniciar Sesión';
+                submitBtn.textContent = 'Ingresar';
+                rememberMeGroup.style.display = 'block';
+                toggleDesc.textContent = '¿No tenés cuenta?';
+                toggleLink.textContent = 'Registrate acá';
+                contraseñaInput.setAttribute('autocomplete', 'current-password');
+            } else {
+                formTitle.textContent = 'Crear Cuenta';
+                submitBtn.textContent = 'Registrarse';
+                rememberMeGroup.style.display = 'none';
+                toggleDesc.textContent = '¿Ya tenés una cuenta?';
+                toggleLink.textContent = 'Iniciá sesión';
+                contraseñaInput.setAttribute('autocomplete', 'new-password');
+            }
+        });
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            clearAlert();
+
+            const username = usuarioInput.value.trim();
+            const password = contraseñaInput.value;
+            const rememberMe = rememberMeCheckbox.checked;
+
+            if (!username || !password) {
+                showAlert('Por favor completá todos los campos.');
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+
+            const endpoint = isLoginMode ? '/api/login' : '/api/register';
+            const payload = isLoginMode 
+                ? { username, password, rememberMe } 
+                : { username, password };
+
+            try {
+                const response = await fetch(`${BACKEND_URL}${endpoint}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showAlert(data.error || 'Ocurrió un error. Inténtalo nuevamente.');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = isLoginMode ? 'Ingresar' : 'Registrarse';
+                    return;
+                }
+
+                // Guardar la sesión según la opción de recordarme
+                if (rememberMe || !isLoginMode) {
+                    localStorage.setItem('auth_token', data.token);
+                    localStorage.setItem('currentUser', JSON.stringify(data.user));
+                    sessionStorage.removeItem('auth_token');
+                    sessionStorage.removeItem('currentUser');
+                } else {
+                    sessionStorage.setItem('auth_token', data.token);
+                    sessionStorage.setItem('currentUser', JSON.stringify(data.user));
+                    localStorage.removeItem('auth_token');
+                    localStorage.removeItem('currentUser');
+                }
+
+                showAlert(isLoginMode ? '¡Bienvenido! Entrando al chat...' : '¡Cuenta creada! Entrando al chat...', true);
+
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 800);
+
+            } catch (err) {
+                console.error(err);
+                showAlert('No se pudo conectar con el servidor. Verificá que el backend esté en ejecución.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = isLoginMode ? 'Ingresar' : 'Registrarse';
+            }
+        });
+    </script>
+</body>
+</html>
