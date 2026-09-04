@@ -179,6 +179,25 @@ function triggerDesktopNotification(title, body) {
 }
 
 // ================= GESTIÓN DE LECTURA Y TÍTULO =================
+function getStoredThreadRead(threadId) {
+    if (!currentUser) return 0;
+    const fromServer = (userReads.threads && userReads.threads[threadId]) || 0;
+    const fromLocal = parseInt(localStorage.getItem(`thread_read_${currentUser.id}_${threadId}`) || '0', 10);
+    return Math.max(fromServer, fromLocal);
+}
+
+function setStoredThreadRead(threadId, lastReadId) {
+    if (!currentUser) return;
+    if (!userReads.threads) userReads.threads = {};
+    userReads.threads[threadId] = Math.max(userReads.threads[threadId] || 0, lastReadId);
+    localStorage.setItem(`thread_read_${currentUser.id}_${threadId}`, String(userReads.threads[threadId]));
+    socket.emit('mark_read', { 
+        userId: currentUser.id,
+        thread_id: threadId, 
+        last_read_id: lastReadId 
+    });
+}
+
 function updateTitle() {
     let totalUnread = 0;
 
@@ -191,13 +210,13 @@ function updateTitle() {
         totalUnread += unreadMain;
     }
 
-    // 2. Respuestas no leídas en hilos: se mantienen como no leídas hasta que se abra el hilo
+    // 2. Respuestas no leídas en hilos
     Object.values(messagesData).forEach(msg => {
         // Si este hilo está abierto y la pestaña está activa, no se cuenta como no leído
         if (currentThreadId === msg.id && !document.hidden) {
             return;
         }
-        const lastReadReplyId = (userReads.threads && userReads.threads[msg.id]) || 0;
+        const lastReadReplyId = getStoredThreadRead(msg.id);
         const replies = msg.replies || [];
         const unreadInThread = replies.filter(r => 
             (r.id || 0) > lastReadReplyId && 
@@ -219,7 +238,11 @@ function markCurrentMainMessagesAsRead() {
     const maxId = Math.max(...ids);
     if (maxId > (userReads.main || 0)) {
         userReads.main = maxId;
-        socket.emit('mark_read', { thread_id: 0, last_read_id: maxId });
+        socket.emit('mark_read', { 
+            userId: currentUser?.id,
+            thread_id: 0, 
+            last_read_id: maxId 
+        });
     }
 }
 
@@ -231,8 +254,7 @@ document.addEventListener('visibilitychange', () => {
             const replies = messagesData[currentThreadId].replies || [];
             if (replies.length > 0) {
                 const maxReplyId = Math.max(...replies.map(r => r.id || 0));
-                userReads.threads[currentThreadId] = maxReplyId;
-                socket.emit('mark_read', { thread_id: currentThreadId, last_read_id: maxReplyId });
+                setStoredThreadRead(currentThreadId, maxReplyId);
                 renderMainChat();
             }
         }
@@ -249,6 +271,9 @@ socket.on('sync_read', (data) => {
         if (sep) sep.remove();
     } else {
         userReads.threads[data.thread_id] = Math.max(userReads.threads[data.thread_id] || 0, data.last_read_id);
+        if (currentUser) {
+            localStorage.setItem(`thread_read_${currentUser.id}_${data.thread_id}`, String(userReads.threads[data.thread_id]));
+        }
         renderMainChat();
     }
     updateTitle();
@@ -264,6 +289,22 @@ socket.on('initial_data', (payload) => {
     messages.forEach(msg => {
         messagesData[msg.id] = msg;
     });
+
+    // En la primera carga del usuario, establecemos la línea base de los hilos existentes
+    // para que el historial antiguo no aparezca como "no leído" con puntos rojos
+    if (currentUser) {
+        const baselineKey = `threads_baseline_${currentUser.id}`;
+        if (!localStorage.getItem(baselineKey)) {
+            messages.forEach(msg => {
+                const replies = msg.replies || [];
+                if (replies.length > 0) {
+                    const maxReplyId = Math.max(...replies.map(r => r.id || 0));
+                    setStoredThreadRead(msg.id, maxReplyId);
+                }
+            });
+            localStorage.setItem(baselineKey, 'true');
+        }
+    }
 
     renderMainChat();
 
@@ -305,8 +346,7 @@ socket.on('receive_thread_message', (reply) => {
     if (currentThreadId === reply.message_id) {
         renderThread();
         if (!document.hidden) {
-            userReads.threads[reply.message_id] = reply.id;
-            socket.emit('mark_read', { thread_id: reply.message_id, last_read_id: reply.id });
+            setStoredThreadRead(reply.message_id, reply.id);
         }
     } else {
         if (document.hidden && reply.sender_id !== currentUser?.id) {
@@ -356,8 +396,8 @@ function renderMainChat() {
         
         const replies = msg.replies || [];
         const replyCount = replies.length;
-        const lastReadReplyId = userReads.threads ? (userReads.threads[msg.id] || 0) : 0;
-        const unreadReplies = replies.filter(r => (r.id || 0) > lastReadReplyId).length;
+        const lastReadReplyId = getStoredThreadRead(msg.id);
+        const unreadReplies = replies.filter(r => (r.id || 0) > lastReadReplyId && r.sender_id !== currentUser?.id).length;
 
         if (replyCount > 0) {
             if (unreadReplies > 0) {
@@ -409,10 +449,9 @@ function openThread(id) {
         const replies = msg.replies || [];
         if (replies.length > 0) {
             const maxReplyId = Math.max(...replies.map(r => r.id || 0));
-            if (maxReplyId > (userReads.threads[id] || 0)) {
-                userReads.threads[id] = maxReplyId;
-                socket.emit('mark_read', { thread_id: id, last_read_id: maxReplyId });
-            }
+            setStoredThreadRead(id, maxReplyId);
+        } else {
+            setStoredThreadRead(id, 0);
         }
         renderThread();
         renderMainChat(); // Refresca el botón en el chat principal para apagar el badge rojo

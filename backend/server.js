@@ -401,7 +401,8 @@ io.on('connection', async (socket) => {
 
     // Registrar lectura de mensajes (chat principal o hilos)
     socket.on('mark_read', async (readData) => {
-        if (!socket.user || !socket.user.id || !readData || readData.last_read_id === undefined) return;
+        let userId = socket.user?.id || readData?.userId;
+        if (!userId || !readData || readData.last_read_id === undefined) return;
         const threadId = readData.thread_id || 0;
         const lastReadId = parseInt(readData.last_read_id, 10);
         if (isNaN(lastReadId)) return;
@@ -414,10 +415,10 @@ io.on('connection', async (socket) => {
                 DO UPDATE SET 
                     last_read_id = GREATEST(user_reads.last_read_id, EXCLUDED.last_read_id),
                     updated_at = CURRENT_TIMESTAMP
-            `, [socket.user.id, threadId, lastReadId]);
+            `, [userId, threadId, lastReadId]);
 
             // Sincronizar en tiempo real con las otras pestañas o dispositivos del mismo usuario
-            socket.to(`user_${socket.user.id}`).emit('sync_read', {
+            socket.to(`user_${userId}`).emit('sync_read', {
                 thread_id: threadId,
                 last_read_id: lastReadId
             });
